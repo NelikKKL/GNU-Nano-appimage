@@ -39,11 +39,16 @@ jobs:
 
       - name: Generate configure script
         run: |
-          if [ -x ./autogen.sh ]; then
-            ./autogen.sh
-          else
-            autoreconf -fiv
+          sudo apt-get install -y gnulib
+
+          # Сообщаем Autoconf, что дополнительные макросы находятся в m4/
+          if ! grep -q 'AC_CONFIG_MACRO_DIRS' configure.ac; then
+            sed -i '/^AC_INIT/i AC_CONFIG_MACRO_DIRS([m4])' configure.ac
           fi
+
+          # Генерируем файлы gnulib и autotools
+          ./autogen.sh
+
 
       - name: Configure GNU nano
         run: |
