@@ -1,13 +1,16 @@
-name: Build Nano AppImage
+name: Build GNU Nano AppImage
 
 on:
   push:
     branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-22.04 # Для лучшей совместимости по GLIBC с другими дистрибутивами
+  build-appimage:
+    # Используем Ubuntu 22.04 для высокой совместимости по GLIBC со старыми системами
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout repository
@@ -20,47 +23,83 @@ jobs:
             build-essential \
             libncursesw5-dev \
             pkg-config \
+            gettext \
             file \
-            wget
+            wget \
+            desktop-file-utils
 
-      - name: Download and Build GNU Nano
+      - name: Download and extract GNU Nano 9.2
         run: |
-          NANO_VERSION="9.2" # Укажите нужную версию
-          wget https://www.nano-editor.org/dist/v8/nano-${NANO_VERSION}.tar.xz
-          tar -xf nano-${NANO_VERSION}.tar.xz
-          cd nano-${NANO_VERSION}
-          
-          # Запускаем сразу configure БЕЗ autoreconf
+          wget https://www.nano-editor.org/dist/v9/nano-9.2.tar.xz
+          tar -xf nano-9.2.tar.xz
+
+      - name: Compile Nano and install to AppDir
+        run: |
+          cd nano-9.2
+          # Собираем с поддержкой Unicode (ncursesw)
           ./configure --prefix=/usr --sysconfdir=/etc
           make -j$(nproc)
-          make DESTDIR=${GITHUB_WORKSPACE}/AppDir install
+          make DESTDIR="${GITHUB_WORKSPACE}/AppDir" install
 
-      - name: Prepare AppDir & Build AppImage
+      - name: Prepare AppDir structure
         run: |
-          cd ${GITHUB_WORKSPACE}
-          
-          # Скачиваем appimagetool
-          wget https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x appimagetool-x86_64.AppImage
-          
-          # Копируем иконку и .desktop файл в корень AppDir
-          cp AppDir/usr/share/pixmaps/nano.png AppDir/ 2>/dev/null || true
-          cp AppDir/usr/share/applications/nano.desktop AppDir/ 2>/dev/null || true
-          
-          # Создаем простейший AppRun, если его нет
+          cd "${GITHUB_WORKSPACE}"
+
+          # 1. Создаем скрипт запуска AppRun
           cat << 'EOF' > AppDir/AppRun
           #!/bin/sh
           HERE="$(dirname "$(readlink -f "${0}")")"
           export PATH="${HERE}/usr/bin:${PATH}"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
           exec "${HERE}/usr/bin/nano" "$@"
           EOF
           chmod +x AppDir/AppRun
-          
-          # Упаковываем AppImage (используем ARCH=x86_64)
-          ARCH=x86_64 ./appimagetool-x86_64.AppImage AppDir GNU_Nano-x86_64.AppImage
+
+          # 2. Копируем .desktop файл в корень AppDir
+          DESKTOP_FILE=$(find AppDir -name "nano.desktop" | head -n 1)
+          if [ -n "$DESKTOP_FILE" ]; then
+            cp "$DESKTOP_FILE" AppDir/
+          else
+            cat << 'EOF' > AppDir/nano.desktop
+          [Desktop Entry]
+          Name=GNU nano
+          Comment=Small and friendly text editor
+          Exec=nano %F
+          Icon=nano
+          Terminal=true
+          Type=Application
+          Categories=Development;TextEditor;Utility;
+          EOF
+          fi
+
+          # 3. Находим или скачиваем иконку
+          ICON_FILE=$(find AppDir -name "*nano*" \( -name "*.png" -o -name "*.svg" \) | head -n 1)
+          if [ -n "$ICON_FILE" ]; then
+            cp "$ICON_FILE" AppDir/
+            # Если файл называется не nano.png/svg, делаем линк
+            ICON_NAME=$(basename "$ICON_FILE")
+            EXT="${ICON_NAME##*.}"
+            cp "$ICON_FILE" "AppDir/nano.${EXT}"
+          else
+            # Запасная иконка, если в пакете nano ее не оказалось
+            wget -O AppDir/nano.svg https://raw.githubusercontent.com/AppImage/appimagetool/master/resources/appimagetool.svg
+          fi
+
+      - name: Build AppImage file
+        run: |
+          # Скачиваем актуальный appimagetool
+          wget https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+
+          # Отключаем встроенную проверку fuse для запуска в контейнере GitHub Actions
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export ARCH=x86_64
+
+          # Генерация AppImage
+          ./appimagetool-x86_64.AppImage AppDir GNU_Nano-9.2-x86_64.AppImage
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: GNU-Nano-AppImage
-          path: GNU_Nano-x86_64.AppImage
+          name: GNU_Nano-9.2-x86_64.AppImage
+          path: GNU_Nano-9.2-x86_64.AppImage
