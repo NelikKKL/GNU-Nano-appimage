@@ -40,6 +40,11 @@ jobs:
 
       - name: Generate configure script
         run: |
+          mkdir -p m4
+          export ACLOCAL="aclocal -I m4"
+          if [ -f Makefile.am ] && ! grep -q 'ACLOCAL_AMFLAGS' Makefile.am; then
+            echo 'ACLOCAL_AMFLAGS = -I m4' >> Makefile.am
+          fi
           ./autogen.sh
 
       - name: Configure GNU nano
@@ -56,7 +61,7 @@ jobs:
         run: |
           rm -rf AppDir
           make DESTDIR="$PWD/AppDir" install-strip
-          
+
           test -x AppDir/usr/bin/nano
           file AppDir/usr/bin/nano
 
@@ -69,10 +74,10 @@ jobs:
           exec "$HERE/usr/bin/nano" "$@"
           EOF
           chmod +x AppDir/AppRun
-          
+
           # 2. Создаем .desktop файл (требуется для linuxdeploy)
           mkdir -p AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
-          
+
           cat > AppDir/usr/share/applications/nano.desktop <<'EOF'
           [Desktop Entry]
           Name=GNU nano
@@ -82,8 +87,8 @@ jobs:
           Icon=nano
           Categories=Utility;TextEditor;
           EOF
-          
-          # 3. Создаем пустую иконку (требуется для linuxdeploy)
+
+          # 3. Создаем иконку (требуется для linuxdeploy)
           touch AppDir/usr/share/icons/hicolor/256x256/apps/nano.png
 
       - name: Download linuxdeploy
