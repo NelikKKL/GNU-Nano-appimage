@@ -35,16 +35,12 @@ jobs:
             texinfo \
             file \
             wget \
-            fuse
+            fuse \
+            gnulib
 
-- name: Generate configure script
+      - name: Generate configure script
         run: |
-          sudo apt-get install -y gnulib
-          
-          # У GNU nano autogen.sh сам корректно вызывает gnulib-tool 
-          # и autoreconf. Ручные патчи через sed здесь не нужны.
           ./autogen.sh
-
 
       - name: Configure GNU nano
         run: |
@@ -60,49 +56,61 @@ jobs:
         run: |
           rm -rf AppDir
           make DESTDIR="$PWD/AppDir" install-strip
-
+          
           test -x AppDir/usr/bin/nano
           file AppDir/usr/bin/nano
 
-      - name: Create AppRun
+      - name: Create AppRun, Desktop file and Icon
         run: |
+          # 1. Создаем AppRun
           cat > AppDir/AppRun <<'EOF'
           #!/bin/sh
           HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
           exec "$HERE/usr/bin/nano" "$@"
           EOF
-
           chmod +x AppDir/AppRun
+          
+          # 2. Создаем .desktop файл (требуется для linuxdeploy)
+          mkdir -p AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
+          
+          cat > AppDir/usr/share/applications/nano.desktop <<'EOF'
+          [Desktop Entry]
+          Name=GNU nano
+          Exec=nano %F
+          Terminal=true
+          Type=Application
+          Icon=nano
+          Categories=Utility;TextEditor;
+          EOF
+          
+          # 3. Создаем пустую иконку (требуется для linuxdeploy)
+          touch AppDir/usr/share/icons/hicolor/256x256/apps/nano.png
 
       - name: Download linuxdeploy
         run: |
           wget -O linuxdeploy.AppImage \
             https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-
           chmod +x linuxdeploy.AppImage
 
       - name: Bundle shared libraries
         run: |
           export APPIMAGE_EXTRACT_AND_RUN=1
-
           ./linuxdeploy.AppImage \
             --appdir AppDir \
-            --executable AppDir/usr/bin/nano
+            --executable AppDir/usr/bin/nano \
+            --desktop-file AppDir/usr/share/applications/nano.desktop \
+            --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/nano.png
 
       - name: Download appimagetool
         run: |
           wget -O appimagetool.AppImage \
             https://github.com/AppImage/appimagetool/releases/latest/download/appimagetool-x86_64.AppImage
-
           chmod +x appimagetool.AppImage
 
       - name: Build AppImage
         run: |
           export APPIMAGE_EXTRACT_AND_RUN=1
-
-          ARCH=x86_64 ./appimagetool.AppImage \
-            AppDir \
-            nano-x86_64.AppImage
+          ARCH=x86_64 ./appimagetool.AppImage AppDir nano-x86_64.AppImage
 
       - name: Test AppImage
         run: |
