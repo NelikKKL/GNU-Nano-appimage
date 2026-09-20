@@ -37,16 +37,12 @@ jobs:
             wget \
             fuse
 
-      - name: Generate configure script
+- name: Generate configure script
         run: |
           sudo apt-get install -y gnulib
-
-          # Сообщаем Autoconf, что дополнительные макросы находятся в m4/
-          if ! grep -q 'AC_CONFIG_MACRO_DIRS' configure.ac; then
-            sed -i '/^AC_INIT/i AC_CONFIG_MACRO_DIRS([m4])' configure.ac
-          fi
-
-          # Генерируем файлы gnulib и autotools
+          
+          # У GNU nano autogen.sh сам корректно вызывает gnulib-tool 
+          # и autoreconf. Ручные патчи через sed здесь не нужны.
           ./autogen.sh
 
 
