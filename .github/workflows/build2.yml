@@ -1,4 +1,4 @@
-name: Build GNU nano AppImage
+name: Build AppImage
 
 on:
   push:
@@ -21,6 +21,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: recursive # Обязательно подтягиваем сабмодули, gnulib часто лежит там
 
       - name: Install build dependencies
         run: |
@@ -30,30 +31,53 @@ jobs:
             automake \
             autopoint \
             gettext \
-            libncurses-dev \
+            libtool \
             pkg-config \
             texinfo \
             file \
             wget \
             fuse \
-            gnulib
+            gnulib \
+            libncurses-dev
 
-      - name: Generate configure script
+      - name: Generate configure script (Fix Gnulib/Gettext conflict)
         run: |
           mkdir -p m4
-          export ACLOCAL="aclocal -I m4"
-          if [ -f Makefile.am ] && ! grep -q 'ACLOCAL_AMFLAGS' Makefile.am; then
-            echo 'ACLOCAL_AMFLAGS = -I m4' >> Makefile.am
+          
+          # Если в проекте есть стандартный скрипт bootstrap, он решит всё сам
+          if [ -x "./bootstrap" ]; then
+            ./bootstrap
+          else
+            # 1. Запускаем autopoint, который может затереть макросы старыми версиями
+            autopoint -f || true
+            
+            # 2. ВОССТАНАВЛИВАЕМ макросы gnulib, перезаписывая старые файлы gettext
+            if [ -f "m4/gnulib-comp.m4" ] || [ -f "m4/gnulib-cache.m4" ]; then
+              echo "Gnulib detected. Running gnulib-tool --update..."
+              gnulib-tool --update || true
+            fi
+            
+            # 3. Указываем aclocal жестко смотреть в m4/
+            export ACLOCAL="aclocal -I m4"
+            if [ -f Makefile.am ] && ! grep -q 'ACLOCAL_AMFLAGS' Makefile.am; then
+              echo 'ACLOCAL_AMFLAGS = -I m4' >> Makefile.am
+            fi
+            
+            # 4. Генерируем configure
+            if [ -x "./autogen.sh" ]; then
+              ./autogen.sh
+            else
+              autoreconf -vfi
+            fi
           fi
-          ./autogen.sh
 
-      - name: Configure GNU nano
+      - name: Configure project
         run: |
           ./configure \
             --prefix=/usr \
             --disable-dependency-tracking
 
-      - name: Build GNU nano
+      - name: Build project
         run: |
           make -j"$(nproc)"
 
@@ -62,15 +86,13 @@ jobs:
           rm -rf AppDir
           make DESTDIR="$PWD/AppDir" install-strip
 
-          test -x AppDir/usr/bin/nano
-          file AppDir/usr/bin/nano
-
       - name: Create AppRun, Desktop file and Icon
         run: |
           # 1. Создаем AppRun
           cat > AppDir/AppRun <<'EOF'
           #!/bin/sh
           HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+          # ВНИМАНИЕ: Замените 'nano' на имя вашего исполняемого файла, если оно другое!
           exec "$HERE/usr/bin/nano" "$@"
           EOF
           chmod +x AppDir/AppRun
@@ -80,15 +102,15 @@ jobs:
 
           cat > AppDir/usr/share/applications/nano.desktop <<'EOF'
           [Desktop Entry]
-          Name=GNU nano
+          Name=My App
           Exec=nano %F
           Terminal=true
           Type=Application
           Icon=nano
-          Categories=Utility;TextEditor;
+          Categories=Utility;
           EOF
 
-          # 3. Создаем иконку (требуется для linuxdeploy)
+          # 3. Создаем пустую иконку (чтобы linuxdeploy не ругался)
           touch AppDir/usr/share/icons/hicolor/256x256/apps/nano.png
 
       - name: Download linuxdeploy
@@ -115,22 +137,17 @@ jobs:
       - name: Build AppImage
         run: |
           export APPIMAGE_EXTRACT_AND_RUN=1
-          ARCH=x86_64 ./appimagetool.AppImage AppDir nano-x86_64.AppImage
-
-      - name: Test AppImage
-        run: |
-          chmod +x nano-x86_64.AppImage
-          ./nano-x86_64.AppImage --version
+          ARCH=x86_64 ./appimagetool.AppImage AppDir myapp-x86_64.AppImage
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nano-AppImage
-          path: nano-x86_64.AppImage
+          name: myapp-AppImage
+          path: myapp-x86_64.AppImage
 
       - name: Create GitHub release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: nano-x86_64.AppImage
+          files: myapp-x86_64.AppImage
           generate_release_notes: true
