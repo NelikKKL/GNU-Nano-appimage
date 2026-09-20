@@ -1,140 +1,66 @@
-name: Build GNU nano AppImage
+name: Build Nano AppImage
 
 on:
   push:
-    branches:
-      - master
-      - main
-    tags:
-      - "v*"
+    branches: [ "main", "master" ]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  build-appimage:
-    runs-on: ubuntu-22.04
+  build:
+    runs-on: ubuntu-22.04 # Для лучшей совместимости по GLIBC с другими дистрибутивами
 
     steps:
-      - name: Checkout source
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            autoconf \
-            automake \
-            autopoint \
-            gettext \
-            libtool \
+            build-essential \
+            libncursesw5-dev \
             pkg-config \
-            texinfo \
             file \
-            wget \
-            fuse \
-            libncurses-dev
+            wget
 
-      - name: Setup Gnulib and Generate configure script
+      - name: Download and Build GNU Nano
         run: |
-          # 1. Клонируем свежий gnulib (в системном apt он слишком старый)
-          git clone --depth=1 https://git.savannah.gnu.org/git/gnulib.git "$HOME/gnulib"
-          export GNULIB_SRCDIR="$HOME/gnulib"
+          NANO_VERSION="9.2" # Укажите нужную версию
+          wget https://www.nano-editor.org/dist/v8/nano-${NANO_VERSION}.tar.xz
+          tar -xf nano-${NANO_VERSION}.tar.xz
+          cd nano-${NANO_VERSION}
+          
+          # Запускаем сразу configure БЕЗ autoreconf
+          ./configure --prefix=/usr --sysconfdir=/etc
+          make -j$(nproc)
+          make DESTDIR=${GITHUB_WORKSPACE}/AppDir install
 
-          # 2. Запускаем autogen.sh (он сам импортирует все m4 макросы и запустит autoconf)
-          if [ -x "./autogen.sh" ]; then
-            ./autogen.sh
-          else
-            autoreconf -fiv
-          fi
-
-      - name: Configure GNU nano
+      - name: Prepare AppDir & Build AppImage
         run: |
-          ./configure \
-            --prefix=/usr \
-            --disable-dependency-tracking
-
-      - name: Build GNU nano
-        run: |
-          make -j"$(nproc)"
-
-      - name: Install into AppDir
-        run: |
-          rm -rf AppDir
-          make DESTDIR="$PWD/AppDir" install-strip
-
-          test -x AppDir/usr/bin/nano
-          file AppDir/usr/bin/nano
-
-      - name: Create AppRun, Desktop file and Icon
-        run: |
-          # 1. Создаем AppRun
-          cat > AppDir/AppRun <<'EOF'
+          cd ${GITHUB_WORKSPACE}
+          
+          # Скачиваем appimagetool
+          wget https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          
+          # Копируем иконку и .desktop файл в корень AppDir
+          cp AppDir/usr/share/pixmaps/nano.png AppDir/ 2>/dev/null || true
+          cp AppDir/usr/share/applications/nano.desktop AppDir/ 2>/dev/null || true
+          
+          # Создаем простейший AppRun, если его нет
+          cat << 'EOF' > AppDir/AppRun
           #!/bin/sh
-          HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-          exec "$HERE/usr/bin/nano" "$@"
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export PATH="${HERE}/usr/bin:${PATH}"
+          exec "${HERE}/usr/bin/nano" "$@"
           EOF
           chmod +x AppDir/AppRun
+          
+          # Упаковываем AppImage (используем ARCH=x86_64)
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage AppDir GNU_Nano-x86_64.AppImage
 
-          # 2. Создаем .desktop файл (требуется для linuxdeploy)
-          mkdir -p AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
-
-          cat > AppDir/usr/share/applications/nano.desktop <<'EOF'
-          [Desktop Entry]
-          Name=GNU nano
-          Exec=nano %F
-          Terminal=true
-          Type=Application
-          Icon=nano
-          Categories=Utility;TextEditor;
-          EOF
-
-          # 3. Создаем иконку (требуется для linuxdeploy)
-          touch AppDir/usr/share/icons/hicolor/256x256/apps/nano.png
-
-      - name: Download linuxdeploy
-        run: |
-          wget -O linuxdeploy.AppImage \
-            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          chmod +x linuxdeploy.AppImage
-
-      - name: Bundle shared libraries
-        run: |
-          export APPIMAGE_EXTRACT_AND_RUN=1
-          ./linuxdeploy.AppImage \
-            --appdir AppDir \
-            --executable AppDir/usr/bin/nano \
-            --desktop-file AppDir/usr/share/applications/nano.desktop \
-            --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/nano.png
-
-      - name: Download appimagetool
-        run: |
-          wget -O appimagetool.AppImage \
-            https://github.com/AppImage/appimagetool/releases/latest/download/appimagetool-x86_64.AppImage
-          chmod +x appimagetool.AppImage
-
-      - name: Build AppImage
-        run: |
-          export APPIMAGE_EXTRACT_AND_RUN=1
-          ARCH=x86_64 ./appimagetool.AppImage AppDir nano-x86_64.AppImage
-
-      - name: Test AppImage
-        run: |
-          chmod +x nano-x86_64.AppImage
-          ./nano-x86_64.AppImage --version
-
-      - name: Upload artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nano-AppImage
-          path: nano-x86_64.AppImage
-
-      - name: Create GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: nano-x86_64.AppImage
-          generate_release_notes: true
+          name: GNU-Nano-AppImage
+          path: GNU_Nano-x86_64.AppImage
