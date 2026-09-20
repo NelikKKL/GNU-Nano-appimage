@@ -36,28 +36,20 @@ jobs:
             file \
             wget \
             fuse \
-            gnulib \
             libncurses-dev
 
-      - name: Generate configure script
+      - name: Setup Gnulib and Generate configure script
         run: |
-          mkdir -p m4
-          export ACLOCAL="aclocal -I m4"
+          # 1. Клонируем свежий gnulib (в системном apt он слишком старый)
+          git clone --depth=1 https://git.savannah.gnu.org/git/gnulib.git "$HOME/gnulib"
+          export GNULIB_SRCDIR="$HOME/gnulib"
 
-          # 1. Запускаем штатный autogen.sh или gnulib-tool для загрузки макросов
+          # 2. Запускаем autogen.sh (он сам импортирует все m4 макросы и запустит autoconf)
           if [ -x "./autogen.sh" ]; then
-            ./autogen.sh || true
-          elif [ -f "m4/gnulib-comp.m4" ]; then
-            gnulib-tool --update || true
+            ./autogen.sh
+          else
+            autoreconf -fiv
           fi
-
-          # 2. ПРИНУДИТЕЛЬНО индексируем все скопированные макросы из m4/ в aclocal.m4
-          aclocal -I m4 --force
-          
-          # 3. Пересобираем configure с уже загруженными макросами
-          autoconf --force
-          autoheader --force || true
-          automake --add-missing --copy || true
 
       - name: Configure GNU nano
         run: |
